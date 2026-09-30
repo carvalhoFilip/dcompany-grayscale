@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Saída dos servidores de armazenamento (gerada ao rodar)
+data/servers/*/*
+!data/servers/*/.gitkeep

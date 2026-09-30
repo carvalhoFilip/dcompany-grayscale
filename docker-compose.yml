@@ -1,0 +1,93 @@
+# DCompany - Módulo de conversão de imagens para tons de cinza
+#
+#   clientes (P) --> fila "images" --> conversores (C1, C2) --> exchange fanout (X)
+#                                                                 |--> fila storage_1 --> armazenamento 1 (C3)
+#                                                                 |--> fila storage_2 --> armazenamento 2 (C4)
+
+x-app: &app
+  build: .
+  image: dcompany-grayscale
+  environment:
+    RABBIT_HOST: rabbitmq
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # painel web: http://localhost:15672 (guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+
+  # ---------- Servidores de armazenamento (redundância: todos salvam tudo) ----------
+  storage1:
+    <<: *app
+    command: python storage.py
+    environment:
+      RABBIT_HOST: rabbitmq
+      STORAGE_ID: "1"
+      OUTPUT_DIR: /data/servers/1
+    volumes:
+      - ./data/servers/1:/data/servers/1
+
+  storage2:
+    <<: *app
+    command: python storage.py
+    environment:
+      RABBIT_HOST: rabbitmq
+      STORAGE_ID: "2"
+      OUTPUT_DIR: /data/servers/2
+    volumes:
+      - ./data/servers/2:/data/servers/2
+
+  # ---------- Servidores de conversão (escaláveis: --scale converter=N) ----------
+  converter:
+    <<: *app
+    command: python converter.py
+    deploy:
+      replicas: 2
+
+  # ---------- Clientes (produtores) ----------
+  client1:
+    <<: *app
+    command: python client.py
+    environment:
+      RABBIT_HOST: rabbitmq
+      CLIENT_ID: "1"
+      INPUT_DIR: /data/clients/1
+      START_DELAY: "5"   # dá tempo dos armazenamentos criarem suas filas
+    volumes:
+      - ./data/clients/1:/data/clients/1:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      storage1:
+        condition: service_started
+      storage2:
+        condition: service_started
+    restart: "no"
+
+  client2:
+    <<: *app
+    command: python client.py
+    environment:
+      RABBIT_HOST: rabbitmq
+      CLIENT_ID: "2"
+      INPUT_DIR: /data/clients/2
+      START_DELAY: "5"
+    volumes:
+      - ./data/clients/2:/data/clients/2:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      storage1:
+        condition: service_started
+      storage2:
+        condition: service_started
+    restart: "no"
